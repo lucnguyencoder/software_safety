@@ -1,161 +1,255 @@
-# BÁO CÁO PHÂN TÍCH QUY TRÌNH KIỂM THỬ AN TOÀN MÃ NGUỒN (WHITEBOX FUZZING)
-**Dự án:** Hệ thống Quản lý Dòng họ (Mộc bản)  
-**Học phần:** Phân tích Thiết kế Phần mềm / An toàn Phần mềm – Đại học Phenikaa  
-**Quy trình thực hiện:** `Source -> Modules -> Log -> Spec -> C Harness -> Excel (CWE/CVE)`  
-**Tiêu chuẩn bảo mật:** MITRE CWE Top 25, NIST NVD (CVE Reference), LLVM Source Coverage
+# BÁO CÁO QUY TRÌNH KIỂM THỬ FUZZING HỘP TRẮNG (WHITE-BOX STATE-SPACE & DFS/BFS FUZZING)
+**Dự án mục tiêu:** Hệ thống Quản lý Gia phả & Dòng họ (`quanly-dongho` / Mộc Bản)  
+**Mã nguồn Fuzzer:** [`clan_genealogy_fuzzer.c`](file:///d:/atpm/project/clan_genealogy_fuzzer.c)  
+**Nhật ký thực thi (Log):** [`fuzzing_execution.log`](file:///d:/atpm/project/fuzzing_execution.log)  
+**Bảng đặc tả Excel:** [`Bao_Cao_Kiem_Thu_Fuzzing_MocBan.xlsx`](file:///d:/atpm/project/Bao_Cao_Kiem_Thu_Fuzzing_MocBan.xlsx)
 
 ---
 
-## 📌 BƯỚC 1: PHÂN TÍCH SOURCE RA MODULES (SOURCE -> MODULES)
+## TỔNG QUAN SƠ ĐỒ QUY TRÌNH THEO ĐÚNG YÊU CẦU CỦA GIẢNG VIÊN
 
-Từ mã nguồn gốc của hệ thống (luồng xử lý thành viên gia phả trong `quanly-dongho/backend/src/routes/members.js` kết hợp bảng dữ liệu `tbl_members`), phân tách thành 5 module nghiệp vụ cốt lõi:
+Toàn bộ dự án được thiết kế và triển khai bám sát **100% hai luồng quy trình** mà giảng viên yêu cầu:
 
-1. **`Module_Payload_Parser`**:
-   - **Nhiệm vụ:** Tiếp nhận mảng byte nhị phân thô từ Fuzzer/mạng, giải mã và trích xuất các trường thông tin (ID, họ tên, giới tính, trạng thái sinh tử, năm sinh/mất âm dương, thế hệ, ID cha/mẹ/vợ/chồng).
-   - **Hàm đại diện:** `validate_member_fields()`, `parse_member_payload()`.
+1. **Luồng 1 (Phân tích Module & Thiết kế Test Case theo Trạng thái - Vùng nhớ):**
+   $$\text{Với mỗi Module (5 Modules)} \longrightarrow \text{Phân tích ra các States (20 States)} \longrightarrow \text{Tạo Cây quan hệ giữa các States \& các Mệnh đề (20 Predicates)} \longrightarrow \text{Cấp phát vùng nhớ (Buffer / Memory)} \longrightarrow \text{Test Case}$$
 
-2. **`Module_Member_Registry`**:
-   - **Nhiệm vụ:** Khởi tạo, cấp phát bộ nhớ động trên Heap, lưu trữ vào cấu trúc bảng tra cứu và giải phóng các nút thành viên (`MemberNode`).
-   - **Hàm đại diện:** `target_member_create()`, `target_member_delete()`, `clean_all()`.
+2. **Luồng 2 (Thực thi Fuzzing White-box với DFS/BFS & Phát hiện Crash/Treo):**
+   $$\text{Test Case rõ các Steps (Process 5 bước)} \longrightarrow \text{Seed Data (3 Seeds)} \longrightarrow \text{Code (10 Hàm)} \longrightarrow \text{Vòng lặp \& Duyệt DFS/BFS} \longrightarrow \text{Phát hiện Trạng thái mới} \longrightarrow \text{Coverage (100\%)} \longrightarrow \text{Phát hiện Crash / Treo (Hang)} \longrightarrow \text{Xuất Log}$$
 
-3. **`Module_Genealogy_Linker`**:
-   - **Nhiệm vụ:** Thiết lập liên kết con trỏ giữa các thành viên (cha - con, mẹ - con, vợ - chồng), kiểm tra tính hợp lệ về huyết thống, phát hiện chu trình lặp phả hệ (Cycle Detection).
-   - **Hàm đại diện:** `target_link_father()`, `clan_link_spouse()`.
+```mermaid
+flowchart TD
+    subgraph P1["PHẦN 1: MÔ HÌNH HÓA TRẠNG THÁI, MỆNH ĐỀ & VÙNG NHỚ CHO TỪNG MODULE"]
+        M["5 Modules cốt lõi của Gia Phả"] --> S["Phân tích 20 Trạng thái (States S00..S19)"]
+        S --> T["Cây quan hệ States & 20 Mệnh đề logic (Predicates P00..P19)"]
+        T --> B["Cấp phát Vùng nhớ (Stack Buffer / Heap Chunk / BSS Table)"]
+        B --> TC["Thiết kế Test Case (12 Test Cases: TC01..TC12)"]
+    end
 
-4. **`Module_Hierarchy_Calculator`**:
-   - **Nhiệm vụ:** Tính toán độ sâu thế hệ (`generation depth`), tính chênh lệch tuổi tác/thời gian sống (sinh - mất), đồng bộ lại bậc thế hệ cho toàn bộ nhánh con cháu.
-   - **Hàm đại diện:** `target_calculate_depth_recursive()`, `compute_age_lifespan()`.
-
-5. **`Module_Audit_Diff_Logger`**:
-   - **Nhiệm vụ:** So sánh trạng thái cấu trúc dữ liệu trước và sau khi chỉnh sửa, nối chuỗi diff chi tiết và ghi nhật ký kiểm toán.
-   - **Hàm đại diện:** `target_audit_diff()`.
-
----
-
-## 📌 BƯỚC 2: TRÍCH XUẤT MODULES RA LOG (MODULES -> LOG)
-
-Mô phỏng cây thực thi động đa bước (Multi-step Stateful Execution Trace), đánh dấu các điểm tương tác dữ liệu, các nhánh rẽ điều kiện (`if/else`) và vòng lặp (`loop`):
-
-```text
-[TRACE:ENTRY] LLVMFuzzerTestOneInput(raw_bytes, size)
-├── [CHECK:VALIDATION] validate_member_fields(data, size)
-│   ├── Kiểm tra size >= sizeof(uint16_t)
-│   └── [LOOP:READ] Đọc checksum theo declared_len (TIỀM ẨN OOB READ nếu declared_len > size)
-├── [CALC:BATCH] count = size / sizeof(FuzzMemberPayload)
-│   └── Giới hạn: if (count > 16) count = 16 (Tối ưu throughput)
-├── [LOOP:STATEFUL_EXECUTION] for (i = 0; i < count; i++)
-│   ├── [PARSER] parse_member_payload(&raw_payloads[i], sizeof(Payload), &p)
-│   │   ├── memcpy struct
-│   │   └── [BRANCH:INTEGER_INDEX] if (p.generation < MAX_GEN_STATS)
-│   │       ├── if (p.generation >= 0) g_generation_stats[p.generation]++
-│   │       └── else -> CẢNH BÁO: CHỈ MỤC MẢNG ÂM (CWE-1284 / CWE-190)
-│   ├── [INTEGER_CALC] compute_age_lifespan(p.birth_year, p.death_year)
-│   │   └── age = death_year - birth_year -> TIỀM ẨN SIGNED INTEGER OVERFLOW (CWE-191)
-│   └── [DISPATCHER] switch (p.action_opcode % 6)
-│       ├── [CASE 0: CREATE] target_member_create(&p)
-│       │   ├── malloc(sizeof(MemberNode))
-│       │   └── memcpy chuỗi không có '\0' -> TIỀM ẨN OOB READ / BUFFER OVERFLOW (CWE-120/125)
-│       ├── [CASE 1: AUDIT] target_audit_diff(n, &p)
-│       │   └── sprintf nối chuỗi dài vào buffer 128B -> TIỀM ẨN STACK OVERFLOW (CWE-120/134)
-│       ├── [CASE 2: LINK_FATHER] target_link_father(child, father)
-│       │   └── father->children[child_count++] khi child_count >= 8 -> HEAP OOB WRITE (CWE-787)
-│       ├── [CASE 3: LINK_SPOUSE] clan_link_spouse(node1, node2)
-│       │   └── Gán đè con trỏ / node2 == NULL -> NULL DEREF / MEMORY LEAK (CWE-476/401)
-│       ├── [CASE 4: RECURSION] target_calculate_depth_recursive(n, 0)
-│       │   └── Đệ quy cha-con khi có chu trình kín -> STACK EXHAUSTION (CWE-674)
-│       └── [CASE 5: DELETE & UAF] target_member_delete(p.member_id)
-│           ├── free(node) và g_clan_table[...] = NULL
-│           └── [TRIGGER:UAF] child->father->id -> KÍCH HOẠT USE-AFTER-FREE (CWE-416)!
-└── [MEM:CLEANUP] clean_all()
-    └── Giải phóng toàn bộ bảng băm sau khi hoàn tất chuỗi đa bước (TIỀM ẨN DOUBLE FREE: CWE-415)
+    subgraph P2["PHẦN 2: QUY TRÌNH THỰC THI FUZZING WHITE-BOX"]
+        TC --> ST["Test Case rõ các Steps (Process 5 bước liên hoàn)"]
+        ST --> SD["Nạp Seed Data Corpus (SEED_01, SEED_02, SEED_03)"]
+        SD --> CD["Thực thi Code mục tiêu (10 hàm C mô phỏng nghiệp vụ Gia phả)"]
+        CD --> DB["Các vòng lặp & Thuật toán duyệt DFS / BFS (Duyệt Cây & Đột biến)"]
+        DB --> NS["Phát hiện các Trạng thái mới (New States Discovered)"]
+        NS --> CV["Đo lường Độ phủ: State Coverage & Predicate Coverage (100%)"]
+        CV --> CR["Phát hiện 8 trường hợp CRASH & 1 trường hợp TREO (HANG)"]
+        CR --> LG["Ghi nhật ký thực thi chi tiết (fuzzing_execution.log)"]
+    end
 ```
 
 ---
 
-## 📌 BƯỚC 3: ĐÁNH GIÁ LOG RA SPEC (LOG -> SPEC)
+## PHẦN 1: VỚI MỖI MODULE $\rightarrow$ PHÂN TÍCH STATES $\rightarrow$ CÂY QUAN HỆ & MỆNH ĐỀ $\rightarrow$ CẤP PHÁT VÙNG NHỚ $\rightarrow$ TEST CASE
 
-Phân tích chi tiết 10 điểm dữ liệu trọng tâm theo 3 khía cạnh an toàn bộ nhớ và chỉ ra các ranh giới phá vỡ (boundary values):
-
-### 1. Về Buffer (Bộ đệm & Thao tác chuỗi)
-- **`target_member_create` (CWE-120 / CWE-125, CVE-2015-0235):**
-  - Mảng `fullName[64]`, `lunar_date[32]`, `address[128]`.
-  - Lỗi: `memcpy` không chèn byte `\0`. Khi hàm gọi `strlen` hoặc `printf` sẽ đọc vượt qua biên bộ đệm.
-- **`target_link_father` (CWE-787 / CWE-122, CVE-2021-3156):**
-  - Mảng con cố định `father->children[8]`.
-  - Lỗi: Không kiểm tra chặn trên khi số lượng con vượt quá `MAX_CHILDREN`, ghi đè các ô nhớ Heap kế cận.
-- **`target_audit_diff` (CWE-134 / CWE-120, CVE-2012-0809):**
-  - Buffer stack `audit_buf[128]`.
-  - Lỗi: `sprintf` nối hai chuỗi họ tên tối đa 64 bytes khiến tổng độ dài vượt 128 bytes, gây tràn ngăn xếp.
-
-### 2. Về Memory (Con trỏ & Quản lý bộ nhớ động)
-- **`target_member_delete` (CWE-416, CVE-2019-0211, CVE-2021-3941):**
-  - Lỗi: Xóa nút cha và `free(node)`, nhưng nút con (`child->father`) không được gỡ liên kết (Dangling Pointer). Khi fuzzer tiếp tục duyệt cây ở bước sau trong cùng một testcase đa bước, lệnh truy cập gây Use-After-Free.
-- **`target_calculate_depth_recursive` (CWE-674 / CWE-400, CVE-2018-1000001):**
-  - Lỗi: Đệ quy theo chuỗi quan hệ huyết thống. Khi tồn tại chu trình lặp kín ($A \rightarrow B \rightarrow A$), hàm đệ quy không có điểm dừng gây cạn kiệt ngăn xếp.
-- **`clan_link_spouse` (CWE-476 / CWE-401, CVE-2020-14386):**
-  - Lỗi: Giải tham chiếu con trỏ khi `node2 == NULL`, hoặc gán đè con trỏ `node1->spouse` liên tục mà không giải phóng gây rò rỉ bộ nhớ.
-- **`clean_all` (CWE-415, CVE-2014-0160):**
-  - Lỗi: Giải phóng vùng nhớ kép (Double Free) khi có liên kết phối ngẫu hai chiều giữa các nút trong bảng băm.
-
-### 3. Về Integer (Biến số & Tràn số nguyên)
-- **`compute_age_lifespan` (CWE-191 / CWE-190, CVE-2019-14287):**
-  - Lỗi: Phép trừ `death_year - birth_year` trên kiểu số nguyên có dấu `int16_t` khi `death_year = -32768` và `birth_year > 0` gây tràn số có dấu (Signed Integer Overflow).
-- **`parse_member_payload` (CWE-190 / CWE-1284, CVE-2016-5195):**
-  - Lỗi: Dùng biến thế hệ `generation` từ payload làm chỉ mục mảng `g_generation_stats[generation]` mà không kiểm tra biên dưới (`generation >= 0`), gây Out-of-bounds Read/Write.
-- **`validate_member_fields` (CWE-131 / CWE-125, CVE-2020-0796):**
-  - Lỗi: Đọc độ dài khai báo `declared_len` và duyệt mảng mà không kiểm tra tương thích với `size` thực tế, gây đọc vượt biên.
+Từ luồng nghiệp vụ cốt lõi nhất của phần mềm Quản lý Dòng họ (**Quản lý Cây Gia Phả & Thành viên** tại `backend/src/routes/members.js` và bảng `tbl_members`), hệ thống được chia thành **5 Module** tuần tự. Dưới đây là phân tích chi tiết từng Module theo đúng 5 mắt xích của Phần 1:
 
 ---
 
-## 📌 BƯỚC 4: MÔ PHỎNG CODE C HARNESS (`clan_genealogy_fuzzer.c`)
+### 1.1. Module 1: `Module_Payload_Parser` (Bóc tách & Định dạng dữ liệu đầu vào)
+* **Chức năng:** Nhận gói tin thêm/sửa thành viên dòng họ, bóc tách trường Họ tên (`raw_name`) và Tiểu sử công đức (`bio_note`).
+* **Các hàm mục tiêu:** `target_parse_member_name()`, `target_format_biography_note()`.
+* **Phân tích các States (`S00` $\rightarrow$ `S05`):**
+  * `S00` (`S00_PARSER_IDLE`): Trạng thái khởi tạo bộ phân tích gói tin.
+  * `S01` (`S01_NAME_BUF_ALLOCATED`): Đã cấp phát bộ đệm tĩnh trên Stack để chứa họ tên.
+  * `S02` (`S02_NAME_COPIED_SAFE`): Sao chép họ tên an toàn trong biên bộ đệm.
+  * `S03` (`S03_NAME_STACK_OVERFLOW`): **CRASH** — Tràn bộ đệm Stack khi họ tên từ 16 ký tự trở lên (`CWE-121`).
+  * `S04` (`S04_BIO_FORMAT_SAFE`): Chuỗi tiểu sử bình thường, không chứa ký tự đặc tả định dạng.
+  * `S05` (`S05_BIO_FORMAT_TAINTED`): **CRASH** — Chuỗi tiểu sử chứa `%x`, `%n` gây lộ/ghi đè bộ nhớ Stack (`CWE-134`).
 
-Mã nguồn C được tái cấu trúc hoàn chỉnh với các cải tiến vượt bậc:
-1. **Hiện thực đầy đủ 10/10 hàm** theo đúng bảng đặc tả nghiệp vụ.
-2. **Cơ chế Multi-step Stateful Harness:** `LLVMFuzzerTestOneInput` tiếp nhận một mảng gồm nhiều lệnh `FuzzMemberPayload` liên tiếp trong một buffer, cho phép xây dựng trạng thái đồ thị phả hệ phức tạp qua nhiều bước và kích hoạt được các luồng phụ thuộc trạng thái (Tạo $\rightarrow$ Liên kết $\rightarrow$ Cập nhật $\rightarrow$ Xóa $\rightarrow$ Truy cập Use-After-Free).
-3. **Độ phủ kiểm thử đạt 100%:** Bao phủ toàn bộ các nhánh rẽ điều kiện của 10 hàm chức năng.
-4. **Tương thích toàn diện:**
-   - Biên dịch chạy cùng **Clang libFuzzer + ASan + UBSan**.
-   - Hỗ trợ **Clang Source-based Coverage** (`-fprofile-instr-generate -fcoverage-mapping`).
-   - Tích hợp sẵn **Standalone Runner** biên dịch chạy trực tiếp bằng **GCC trên Windows** với 50.000 lượt kiểm thử.
-
----
-
-## 📌 BƯỚC 5: BẢNG TỔNG HỢP RỦI RO CWE/CVE & ĐỘ PHỦ NHÁNH MỤC TIÊU
-
-*(Bảng này được đồng bộ 100% với file `Bao_Cao_Kiem_Thu_Fuzzing_MocBan.xlsx` và `.csv`)*
-
-| STT | Module | Tên hàm | Vùng dữ liệu | Loại | Mã CWE & CVE tham chiếu | Mức độ | Mục tiêu độ phủ nhánh (Target Branch Coverage) | Mô tả phạm vi lỗi | Chiến lược tạo dữ liệu Fuzz |
-| :---: | :--- | :--- | :--- | :---: | :---: | :---: | :--- | :--- | :--- |
-| **1** | `Module_Member_Registry` | `target_member_create` | `full_name, lunar_date, address` | buffer | **CWE-120 / CWE-125**<br>*(CVE-2015-0235)* | High | Nhánh `p->full_name[0] != '\0'`; phủ toàn bộ các lệnh `memcpy` 64 bytes chuỗi không có null-terminator | Sao chép chuỗi từ payload nhị phân vào mảng 64 bytes không đảm bảo ký tự kết thúc null (`\0`). Hàm `strlen()` / `printf()` đọc tràn biên gây lộ thông tin (OOB Read) hoặc crash. | Tạo chuỗi byte ngẫu nhiên 64 bytes không chứa `0x00`; chèn chuỗi liên tục không có null-terminator. |
-| **2** | `Module_Genealogy_Linker` | `target_link_father` | `father->children[MAX_CHILDREN]` | buffer | **CWE-787 / CWE-122**<br>*(CVE-2021-3156)* | Critical | Nhánh `child_count >= MAX_CHILDREN`; kích hoạt nhánh ghi phần tử thứ 9 vào mảng cố định 8 con trỏ | Ghi vượt ngoài giới hạn mảng (Heap OOB Write) khi số con của một cha vượt quá `MAX_CHILDREN (8)`. Ghi đè heap metadata hoặc con trỏ hàm. | Sinh chuỗi lệnh liên tục `opcode=2` với cùng `father_id` và hơn 8 `child_id` khác nhau trong mảng đa bước. |
-| **3** | `Module_Hierarchy_Calculator` | `target_calculate_depth_recursive` | `node->father pointer chain` | memory | **CWE-674 / CWE-400**<br>*(CVE-2018-1000001, CVE-2022-22817)* | High | Nhánh `node != NULL` và đệ quy sâu; nhánh phát hiện `current_depth > 128` khi tồn tại chu trình lặp | Đệ quy không kiểm soát gây cạn kiệt ngăn xếp (Stack Overflow) khi đồ thị phả hệ chứa chu trình lặp huyết thống kín ($A \rightarrow B \rightarrow A$). | Tạo payload liên kết vòng lặp khép kín: Node 1 $\rightarrow$ Node 2 $\rightarrow$ Node 1, kích hoạt `opcode=4` tính bậc thế hệ. |
-| **4** | `Module_Member_Registry` | `target_member_delete` | `g_clan_table & pointer links` | memory | **CWE-416**<br>*(CVE-2019-0211, CVE-2021-3941)* | Critical | Nhánh xóa cha (`node != NULL`) kết hợp nhánh kiểm tra `child->father != NULL` ngay sau đó | Sử dụng vùng nhớ sau giải phóng (Use-After-Free): Xóa node cha nhưng con vẫn giữ con trỏ trỏ về cha đã free. Lệnh kế tiếp truy cập lại gây crash hoặc RCE. | Chuỗi đa bước trong 1 testcase: Lệnh 0 (Tạo A, B) $\rightarrow$ Lệnh 2 (Link A là cha B) $\rightarrow$ Lệnh 5 (Xóa A) $\rightarrow$ Lệnh truy cập từ B lên cha A đã free. |
-| **5** | `Module_Audit_Diff_Logger` | `target_audit_diff` | `audit_buf[128]` | buffer | **CWE-134 / CWE-120**<br>*(CVE-2012-0809, CVE-2020-1967)* | High | Nhánh `find_node(id) != NULL`; nhánh `written >= sizeof(audit_buf)` khi chuỗi diff vượt quá 128 bytes | Tràn bộ đệm ngăn xếp (Stack Buffer Overflow) hoặc lỗi Format String khi chuỗi mô tả biến động phả hệ bị nối chuỗi vượt quá 128 bytes, hoặc chứa `%s`, `%n`, `%x`. | Gửi chuỗi họ tên tối đa 63 bytes chứa các ký tự đặc biệt `%n%p%s` và tạo chuỗi diff cực đại (> 128 bytes). |
-| **6** | `Module_Hierarchy_Calculator` | `compute_age_lifespan` | `birth_year, death_year` | integer | **CWE-191 / CWE-190**<br>*(CVE-2019-14287)* | Medium | Bao phủ toàn bộ đường thực thi phép tính tuổi thọ (`death_year - birth_year`); kích hoạt nhánh tràn số có dấu | Tràn số nguyên dưới khi tính tuổi thọ (`death_year - birth_year`): Khi năm sinh là số dương lớn và năm mất là số âm cực đoan (`-32768`), phép trừ gây tràn số có dấu. | Đưa các giá trị biên cực đoan: `birth_year = 32767`, `death_year = -32768`; `birth_year = 0`, `death_year = -1`. |
-| **7** | `Module_Payload_Parser` | `parse_member_payload` | `generation, g_generation_stats` | integer | **CWE-190 / CWE-1284**<br>*(CVE-2016-5195, CVE-2017-1000112)* | Medium | Nhánh `out_payload->generation < MAX_GEN_STATS` kết hợp nhánh `generation` âm (`< 0`) | Sai lệch dấu và tràn số nguyên ở biến thế hệ (`generation <= 0` hoặc `> 30000`). Giá trị âm dùng làm chỉ mục mảng gây Out-of-bounds Read/Write. | Kiểm thử các giá trị biên: `generation = -32768, -1, 0, 32767`; `opcode = 255`. |
-| **8** | `Module_Member_Registry` | `clean_all` | `g_clan_table nodes` | memory | **CWE-415**<br>*(CVE-2014-0160, CVE-2019-11043)* | High | Vòng lặp giải phóng toàn bộ bảng băm `for (i=0; i<HASH_SIZE; i++)`; nhánh `g_clan_table[i] != NULL` | Giải phóng vùng nhớ kép (Double Free) hoặc Memory Leak xảy ra khi nhiều bucket hoặc nút phả hệ cùng tham chiếu tới một con trỏ do xung đột hàm băm. | Sinh nhiều `member_id` có cùng giá trị modulo 64 (`id=1` và `id=65`) kết hợp xen kẽ các lệnh tạo, xóa và dọn dẹp. |
-| **9** | `Module_Payload_Parser` | `validate_member_fields` | `data buffer, declared_len` | integer | **CWE-131 / CWE-125**<br>*(CVE-2020-0796)* | Medium | Nhánh `size < sizeof(uint16_t)`; nhánh `declared_len > 0` và vòng lặp đọc checksum theo `declared_len` | Xử lý sai kích thước dữ liệu đầu vào khi `size < sizeof(Header)` hoặc `declared_len > size` thực tế, dẫn đến đọc ngoài biên bộ nhớ (OOB Read). | Cung cấp `size = 0, 1, sizeof(FuzzMemberPayload) - 1, 0xFFFFFFFF`; byte đầu tiên chứa `declared_len` cực đại. |
-| **10** | `Module_Genealogy_Linker` | `clan_link_spouse` | `node1->spouse, node2->spouse` | memory | **CWE-476 / CWE-401**<br>*(CVE-2020-14386)* | Medium | Nhánh `node1 != NULL` kết hợp nhánh `node2 == NULL`; nhánh gán đè liên kết phối ngẫu nhiều lần | Giải tham chiếu con trỏ NULL khi truy cập thông tin phối ngẫu; hoặc rò rỉ bộ nhớ (Memory Leak) khi gán đè con trỏ phối ngẫu mà không giải phóng nút cũ. | Gửi `spouse_id = 0` (khiến `node2 = NULL`) kết hợp `opcode=3` cập nhật liên kết phối ngẫu nhiều lần liên tiếp trên cùng một node. |
-
----
-
-## 📌 HƯỚNG DẪN ĐO ĐỘ PHỦ SOURCE-BASED CODE COVERAGE (CLANG)
-
-Để xuất báo cáo tỷ lệ bao phủ mã nguồn dạng giao diện HTML nộp cho giảng viên:
-
-```bash
-# 1. Biên dịch với cờ sinh profile coverage
-clang -fprofile-instr-generate -fcoverage-mapping -g clan_genealogy_fuzzer.c -o fuzzer_cov
-
-# 2. Khởi chạy để sinh dữ liệu profraw
-LLVM_PROFILE_FILE="clan_%p.profraw" ./fuzzer_cov
-
-# 3. Gộp các file profraw thành profdata
-llvm-profdata merge -sparse clan_*.profraw -o clan.profdata
-
-# 4. Xuất báo cáo tổng hợp text
-llvm-cov report ./fuzzer_cov -instr-profile=clan.profdata
-
-# 5. Xuất báo cáo giao diện HTML trực quan từng dòng code
-llvm-cov show ./fuzzer_cov -instr-profile=clan.profdata -format=html -output-dir=coverage_report
+* **Cây quan hệ giữa các States & Các Mệnh đề (Predicates `P00`..`P05`):**
+```mermaid
+flowchart LR
+    S00["S00: PARSER_IDLE<br/>(P00: input_packet != NULL)"] -->|"P01: alloc char local_buf[16]"| S01["S01: NAME_BUF_ALLOCATED<br/>(Stack: 16 bytes)"]
+    S01 -->|"P02: strlen(raw_name) < 16"| S02["S02: NAME_COPIED_SAFE<br/>(NORMAL)"]
+    S01 -->|"P03: strlen(raw_name) >= 16"| S03["S03: NAME_STACK_OVERFLOW<br/>(CRASH_BUF - CWE-121)"]
+    S00 -->|"P04: strchr(bio, '%') == NULL"| S04["S04: BIO_FORMAT_SAFE<br/>(NORMAL)"]
+    S00 -->|"P05: strstr(bio, '%x' or '%n')"| S05["S05: BIO_FORMAT_TAINTED<br/>(CRASH_BUF - CWE-134)"]
 ```
+
+* **Cấp phát vùng nhớ (Buffer / Memory) & Ánh xạ Test Case:**
+
+| State | Mệnh đề chuyển tiếp (Predicate) | Cấp phát Vùng nhớ (Buffer / Memory) | Kết quả | Test Case kích hoạt |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S00`** | `P00`: `input_packet != NULL` | Stack Frame khởi tạo (0 bytes) | `NORMAL` | `TC01_SEED_ROOT` |
+| **`S01`** | `P01`: Khai báo `char local_name_buf[16]` | **Stack Buffer:** `char local_name_buf[16]` (16 bytes) | `NORMAL` | `TC01_SEED_ROOT` |
+| **`S02`** | `P02`: `strlen(raw_name) < 16` | **Stack Buffer:** Dùng $\le 15$ bytes / 16 bytes | `NORMAL` | `TC01`..`TC03` |
+| **`S03`** | `P03`: `strlen(raw_name) >= 16` | **Stack Buffer Overrun:** Chuỗi 45B tràn qua 16B | **`CRASH_BUF` (`CWE-121`)** | `TC04_BFS_STACK_OVF` |
+| **`S04`** | `P04`: `strchr(bio_note, '%') == NULL` | **Stack Buffer:** `char fmt_buf[64]` (64 bytes) | `NORMAL` | `TC01`..`TC03` |
+| **`S05`** | `P05`: `strstr(bio_note, "%x") \|\| strstr(bio_note, "%n")` | **Stack Buffer:** `char fmt_buf[64]` bị đọc/ghi Stack | **`CRASH_BUF` (`CWE-134`)** | `TC05_BFS_FMT_STR` |
+
+---
+
+### 1.2. Module 2: `Module_Member_Registry` (Quản lý Vùng nhớ Heap Hồ sơ Thành viên)
+* **Chức năng:** Cấp phát vùng nhớ động trên Heap (`malloc`) cho cấu trúc `ClanMember`, quản lý thao tác xóa tạm thời (`free`) và khôi phục/chỉnh sửa.
+* **Các hàm mục tiêu:** `target_registry_lifecycle()` (gồm cấp phát, cập nhật sau giải phóng và rollback xóa).
+* **Phân tích các States (`S06` $\rightarrow$ `S10`):**
+  * `S06` (`S06_REGISTRY_READY`): Bảng quản lý con trỏ thành viên sẵn sàng.
+  * `S07` (`S07_HEAP_NODE_ALLOCATED`): Đã gọi `malloc(sizeof(ClanMember))` cấp phát vùng nhớ Heap.
+  * `S08` (`S08_HEAP_NODE_FREED_DANGLING`): Đã gọi `free(node)` nhưng chưa gán `node = NULL` (tạo con trỏ lơ lửng - Dangling Pointer).
+  * `S09` (`S09_HEAP_USE_AFTER_FREE`): **CRASH** — Ghi đè dữ liệu vào vùng nhớ Heap đã giải phóng (`CWE-416`).
+  * `S10` (`S10_HEAP_DOUBLE_FREE`): **CRASH** — Gọi `free(node)` lần thứ 2 trên cùng một địa chỉ Heap (`CWE-415`).
+
+* **Cây quan hệ giữa các States & Các Mệnh đề (Predicates `P06`..`P10`):**
+```mermaid
+flowchart LR
+    S06["S06: REGISTRY_READY<br/>(P06: registry_table != NULL)"] -->|"P07: slot in [0..15] && malloc()"| S07["S07: HEAP_NODE_ALLOCATED<br/>(Heap Chunk: 64 bytes)"]
+    S07 -->|"P08: free(node) without NULLing"| S08["S08: HEAP_NODE_FREED_DANGLING<br/>(Dangling Pointer)"]
+    S08 -->|"P09: op == EDIT_AFTER_FREE"| S09["S09: HEAP_USE_AFTER_FREE<br/>(CRASH_MEM - CWE-416)"]
+    S08 -->|"P10: op == ROLLBACK_DELETE (free #2)"| S10["S10: HEAP_DOUBLE_FREE<br/>(CRASH_MEM - CWE-415)"]
+```
+
+* **Cấp phát vùng nhớ (Buffer / Memory) & Ánh xạ Test Case:**
+
+| State | Mệnh đề chuyển tiếp (Predicate) | Cấp phát Vùng nhớ (Buffer / Memory) | Kết quả | Test Case kích hoạt |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S06`** | `P06`: `registry_table != NULL` | **BSS Array:** `ClanMember *g_registry_table[16]` | `NORMAL` | `TC01_SEED_ROOT` |
+| **`S07`** | `P07`: `slot_id in [0..15] && malloc(sizeof(ClanMember))` | **Heap Chunk:** `malloc(64 bytes)` cho `ClanMember` | `NORMAL` | `TC01`..`TC03` |
+| **`S08`** | `P08`: `free(g_registry_table[slot])` nhưng không gán `NULL` | **Heap Freed Chunk:** 64 bytes đã trả về Heap Bin | `NORMAL` (Trung gian) | `TC09`, `TC10` |
+| **`S09`** | `P09`: `lifecycle_op == 1 && g_node_freed_flag[slot] == 1` | **Heap Use-After-Free:** Ghi vào chunk 64B đã `free` | **`CRASH_MEM` (`CWE-416`)** | `TC09_DFS_HEAP_UAF` |
+| **`S10`** | `P10`: `lifecycle_op == 2 && g_node_free_count[slot] == 2` | **Heap Double Free:** Giải phóng chunk 64B lần 2 | **`CRASH_MEM` (`CWE-415`)** | `TC10_DFS_DBL_FREE` |
+
+---
+
+### 1.3. Module 3: `Module_Genealogy_Linker` (Liên kết Cha-Con & Phối ngẫu trên Cây Gia Phả)
+* **Chức năng:** Gán chỉ mục nút Cha (`parent_idx`) và liên kết con trỏ Vợ/Chồng (`spouse_ptr`) giữa các thành viên.
+* **Các hàm mục tiêu:** `target_link_genealogy_relations()`.
+* **Phân tích các States (`S11` $\rightarrow$ `S14`):**
+  * `S11` (`S11_LINKER_VALIDATED`): Chỉ mục nút Cha hợp lệ trong mảng `[0..15]`.
+  * `S12` (`S12_PARENT_OOB_WRITE`): **CRASH** — Chỉ mục `parent_idx < 0` hoặc `>= 16` gây ghi tràn ngoài biên mảng (`CWE-787`).
+  * `S13` (`S13_SPOUSE_LINKED_OK`): Con trỏ phối ngẫu hợp lệ, liên kết thành công.
+  * `S14` (`S14_SPOUSE_NULL_DEREF`): **CRASH** — Truy cập trực tiếp con trỏ `spouse_ptr == NULL` tại ô chưa khởi tạo (`CWE-476`).
+
+* **Cây quan hệ giữa các States & Các Mệnh đề (Predicates `P11`..`P14`):**
+```mermaid
+flowchart LR
+    S07["S07: HEAP_NODE_ALLOCATED"] -->|"P11: 0 <= parent_idx < 16"| S11["S11: LINKER_VALIDATED<br/>(NORMAL)"]
+    S07 -->|"P12: parent_idx < 0 || parent_idx >= 16"| S12["S12: PARENT_OOB_WRITE<br/>(CRASH_MEM - CWE-787)"]
+    S11 -->|"P13: registry[spouse_idx] != NULL"| S13["S13: SPOUSE_LINKED_OK<br/>(NORMAL)"]
+    S11 -->|"P14: spouse_idx == 15 && registry[15] == NULL"| S14["S14: SPOUSE_NULL_DEREF<br/>(CRASH_MEM - CWE-476)"]
+```
+
+* **Cấp phát vùng nhớ (Buffer / Memory) & Ánh xạ Test Case:**
+
+| State | Mệnh đề chuyển tiếp (Predicate) | Cấp phát Vùng nhớ (Buffer / Memory) | Kết quả | Test Case kích hoạt |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S11`** | `P11`: `parent_idx >= 0 && parent_idx < 16` | **BSS Table:** `g_registry_table[0..15]` (128 bytes) | `NORMAL` | `TC01`..`TC03` |
+| **`S12`** | `P12`: `parent_idx < 0 \|\| parent_idx >= 16` | **BSS Out-of-Bounds:** Ghi lệch `-5 * 8 = -40 bytes` | **`CRASH_MEM` (`CWE-787`)** | `TC06_BFS_OOB_WRITE` |
+| **`S13`** | `P13`: `spouse_idx >= 0 && g_registry_table[spouse_idx] != NULL` | **Heap Pointer Reference:** 8 bytes địa chỉ hợp lệ | `NORMAL` | `TC01`..`TC03` |
+| **`S14`** | `P14`: `spouse_idx == 15 && g_registry_table[15] == NULL` | **NULL Address Access:** Đọc/ghi tại `0x00000000` | **`CRASH_MEM` (`CWE-476`)** | `TC07_BFS_NULL_PTR` |
+
+---
+
+### 1.4. Module 4: `Module_Hierarchy_Calculator` (Tính Đời/Thế hệ bằng DFS/BFS & Quỹ khuyến học)
+* **Chức năng:**
+  1. Duyệt Cây Gia Phả theo chiều sâu (**DFS** - `target_calculate_depth_dfs`) để tính bậc thế hệ từ thành viên hiện tại ngược lên Thủy tổ.
+  2. Duyệt Cây Gia Phả theo chiều rộng (**BFS** - `target_traverse_children_bfs`) bằng hàng đợi `queue[]` để thống kê danh sách con cháu theo từng đời.
+  3. Cấp phát bộ đệm Heap tính tổng quỹ đóng góp khuyến học của dòng họ (`target_hierarchy_and_fund_calc`).
+* **Phân tích các States (`S15` $\rightarrow$ `S17`):**
+  * `S15` (`S15_CALC_DFS_BFS_NORMAL`): Đồ thị gia phả là cây không chu trình (DAG/Tree), cả DFS và BFS dừng sau hữu hạn bước ($\le 32$ bước).
+  * `S16` (`S16_CALC_CYCLE_HANG`): **TREO (HANG / INFINITE LOOP)** — Khi dữ liệu liên kết Cha-Con tạo chu trình ($0 \leftrightarrow 1$, cha là con của chính con mình), vòng lặp duyệt DFS và hàng đợi BFS lặp vô tận vượt ngưỡng `MAX_DFS_BFS_STEPS` (`CWE-674` / `CWE-835`).
+  * `S17` (`S17_FUND_INT_OVERFLOW_HEAP`): **CRASH** — Tràn số nguyên 16-bit khi tính `alloc_bytes = (uint16_t)(count * 4)` với `count = 16385` ($16385 \times 4 = 65540 \equiv 4 \pmod{65536}$), dẫn đến cấp phát bộ đệm Heap chỉ 4 bytes cho 16.385 phần tử (`CWE-190` $\rightarrow$ `CWE-122`).
+
+* **Cây quan hệ giữa các States & Các Mệnh đề (Predicates `P15`..`P17`):**
+```mermaid
+flowchart LR
+    S11["S11: LINKER_VALIDATED"] -->|"P15: dfs_steps <= 32 && bfs_steps <= 32"| S15["S15: CALC_DFS_BFS_NORMAL<br/>(NORMAL)"]
+    S11 -->|"P16: cycle_detected (parent[0]==1 && parent[1]==0)"| S16["S16: CALC_CYCLE_HANG<br/>(HANG / INFINITE LOOP - CWE-674)"]
+    S15 -->|"P17: (uint16_t)(count * 4) < count"| S17["S17: FUND_INT_OVERFLOW_HEAP<br/>(CRASH_INT - CWE-190)"]
+```
+
+* **Cấp phát vùng nhớ (Buffer / Memory) & Ánh xạ Test Case:**
+
+| State | Mệnh đề chuyển tiếp (Predicate) | Cấp phát Vùng nhớ (Buffer / Memory) | Kết quả | Test Case kích hoạt |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S15`** | `P15`: `dfs_steps <= 32 && bfs_steps <= 32` (Cây không chu trình) | **Stack DFS + Queue BFS:** `int queue[64]` (256 bytes) | `NORMAL` | `TC01`..`TC03` |
+| **`S16`** | `P16`: `parent[0]==1 && parent[1]==0` (Chu trình $0 \leftrightarrow 1$) | **Stack/Queue Exhaustion:** Lặp vô tận $> 32$ bước | **`HANG` (`CWE-674`)** | `TC11_DFS_CYCLE_HANG` |
+| **`S17`** | `P17`: `(uint16_t)(count * sizeof(uint32_t)) < count` | **Undersized Heap Buffer:** `malloc(4B)` cho `16385` mục | **`CRASH_INT` (`CWE-190`)** | `TC12_DFS_INT_OVF` |
+
+---
+
+### 1.5. Module 5: `Module_Audit_Diff_Logger` (So sánh Lịch sử chỉnh sửa & Ghi nhật ký kiểm toán)
+* **Chức năng:** Sao chép chuỗi tiểu sử cũ (`old_bio_buf[24]`) sang bộ đệm đối chiếu để lưu vết lịch sử thay đổi (`audit_logs`).
+* **Các hàm mục tiêu:** `target_audit_diff_logger()`.
+* **Phân tích các States (`S18` $\rightarrow$ `S19`):**
+  * `S18` (`S18_AUDIT_DIFF_ALIGNED`): Số byte yêu cầu đối chiếu `claim_len <= 24`, đọc an toàn trong biên.
+  * `S19` (`S19_AUDIT_OOB_READ`): **CRASH** — Số byte yêu cầu đối chiếu `claim_len = 60 > 24`, `memcpy` đọc tràn qua biên bộ đệm Stack 24 bytes làm rò rỉ dữ liệu nhạy cảm trên Stack (`CWE-125`).
+
+* **Cây quan hệ giữa các States & Các Mệnh đề (Predicates `P18`..`P19`):**
+```mermaid
+flowchart LR
+    S15["S15: CALC_DFS_BFS_NORMAL"] -->|"P18: claim_len <= 24"| S18["S18: AUDIT_DIFF_ALIGNED<br/>(NORMAL)"]
+    S15 -->|"P19: claim_len > 24"| S19["S19: AUDIT_OOB_READ<br/>(CRASH_BUF - CWE-125)"]
+```
+
+* **Cấp phát vùng nhớ (Buffer / Memory) & Ánh xạ Test Case:**
+
+| State | Mệnh đề chuyển tiếp (Predicate) | Cấp phát Vùng nhớ (Buffer / Memory) | Kết quả | Test Case kích hoạt |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S18`** | `P18`: `claim_len <= sizeof(old_bio_buf)` ($\le 24$) | **Stack Buffer:** `char old_bio_buf[24]` (Đọc $\le 24$B) | `NORMAL` | `TC01`..`TC03` |
+| **`S19`** | `P19`: `claim_len > 24` (`claim_len = 60`) | **Stack Over-read:** Đọc 60 bytes từ bộ đệm 24 bytes | **`CRASH_BUF` (`CWE-125`)** | `TC08_BFS_OOB_READ` |
+
+---
+
+## PHẦN 2: QUY TRÌNH FUZZING WHITE-BOX CHI TIẾT
+**(Steps / Process $\rightarrow$ Seed Data $\rightarrow$ Code $\rightarrow$ Vòng lặp & DFS/BFS $\rightarrow$ Phát hiện Trạng thái mới $\rightarrow$ Coverage $\rightarrow$ Crash/Treo $\rightarrow$ Log)**
+
+### 2.1. Test Case rõ về các Steps (Process 5 bước liên hoàn)
+Mỗi Test Case (`struct FuzzTestCase` trong [`clan_genealogy_fuzzer.c`](file:///d:/atpm/project/clan_genealogy_fuzzer.c#L102-L125)) không phải là một chuỗi ngẫu nhiên rời rạc mà là một **Process gồm 5 Steps tuần tự** đi xuyên qua 5 Module của hệ thống:
+* **Step 1 (`Parser`):** Truyền `step1_raw_name` và `step1_bio_note` vào `Module_Payload_Parser` để cấp phát Stack buffer 16B/64B và kiểm tra mệnh đề `P00`..`P05`.
+* **Step 2 (`Registry`):** Truyền `step2_slot_id` và `step2_lifecycle_op` vào `Module_Member_Registry` để cấp phát Heap chunk 64B (`malloc`) và thực thi kịch bản vòng đời bộ nhớ (`0`: Bình thường, `1`: Free rồi Edit $\rightarrow$ UAF, `2`: Free rồi Rollback $\rightarrow$ Double Free), kiểm tra `P06`..`P10`.
+* **Step 3 (`Linker`):** Truyền `step3_parent_idx`, `step3_spouse_idx`, `step3_create_cycle` vào `Module_Genealogy_Linker` để gán quan hệ Cha-Con và Vợ-Chồng, kiểm tra `P11`..`P14`.
+* **Step 4 (`DFS/BFS & Fund`):** Kích hoạt thuật toán duyệt chiều sâu **DFS** (`target_calculate_depth_dfs`) và duyệt chiều rộng **BFS** (`target_traverse_children_bfs`) trên cây gia phả, đồng thời cấp phát bộ nhớ quỹ họ với `step4_fund_record_count`, kiểm tra `P15`..`P17`.
+* **Step 5 (`Audit Diff`):** Truyền `step5_audit_claim_len` vào `Module_Audit_Diff_Logger` để đối chiếu lịch sử chỉnh sửa trên bộ đệm Stack 24B, kiểm tra `P18`..`P19`.
+
+---
+
+### 2.2. Tập dữ liệu hạt giống khởi tạo (Seed Data Corpus)
+Chiến dịch Fuzzing khởi đầu (Giai đoạn A) bằng **3 Seed Data hợp lệ** đại diện cho 3 thế hệ trong gia phả:
+1. **`SEED_01` (`TC01_SEED_ROOT`):** Thủy tổ (`"Nguyen Van To"`, `slot=0`, `parent=0`, `spouse=0`, `cycle=0`, `fund_count=10`, `claim_len=12`).
+   * Mở khóa ngay **10/20 States nền tảng** (`S00, S01, S02, S04, S06, S07, S11, S13, S15, S18`) $\rightarrow$ Đạt độ phủ nền **50.0%**.
+2. **`SEED_02` (`TC02_SEED_BRANCH`):** Trưởng chi đời thứ 2 (`"Nguyen Van A"`, `slot=1`, `fund_count=25`, `claim_len=16`).
+3. **`SEED_03` (`TC03_SEED_LEAF`):** Cháu đời thứ 3 (`"Nguyen Van B"`, `slot=2`, `parent=1`, `spouse=1`, `fund_count=50`, `claim_len=20`).
+
+---
+
+### 2.3. Các vòng lặp & Thuật toán duyệt DFS / BFS (Hai tầng ứng dụng)
+Trong [`clan_genealogy_fuzzer.c`](file:///d:/atpm/project/clan_genealogy_fuzzer.c), thuật toán **DFS (Depth-First Search)** và **BFS (Breadth-First Search)** được cài đặt tường minh ở **cả 2 tầng**:
+
+1. **Tầng Nghiệp vụ Cây Gia Phả (Trong `Module_Hierarchy_Calculator`):**
+   * **Hàm DFS [`target_calculate_depth_dfs()`](file:///d:/atpm/project/clan_genealogy_fuzzer.c#L262-L271):** Dùng vòng lặp `while (curr != -1 && steps <= MAX_DFS_BFS_STEPS)` leo ngược từ nút con (`curr = g_parent_map[curr]`) lên Thủy tổ để tính thế hệ. Nếu gặp chu trình (`0 <-> 1`), `steps` vượt ngưỡng `32` và phát hiện lỗi **Treo (HANG - `S16`)**.
+   * **Hàm BFS [`target_traverse_children_bfs()`](file:///d:/atpm/project/clan_genealogy_fuzzer.c#L274-L291):** Dùng cấu trúc hàng đợi `int queue[64]` (`head`, `tail`) duyệt từng tầng con cháu. Khi có chu trình, các nút con-cha đẩy nhau liên tục vào hàng đợi `queue[]` gây lặp vô hạn và bị bắt bởi bộ giám sát bước lặp.
+
+2. **Tầng Chiến lược Đột biến Fuzzer (Trong [`run_whitebox_fuzzing_campaign()`](file:///d:/atpm/project/clan_genealogy_fuzzer.c#L368-L469)):**
+   * **Giai đoạn B — Vòng lặp BFS (`bfs_queue[5]`, Độ sâu đột biến `Depth = 1`):** Duyệt theo **chiều rộng** ngang qua tất cả các Module để đảo từng mệnh đề điều kiện biên đơn lẻ (`P03`, `P05`, `P12`, `P14`, `P19`). Kết quả mở khóa thêm **5 States mới** (`S03, S05, S12, S14, S19`), nâng độ phủ từ **50.0% $\rightarrow$ 75.0%**.
+   * **Giai đoạn C — Vòng lặp DFS (`dfs_stack[4]`, Độ sâu đột biến `Depth = 2..5`):** Duyệt theo **chiều sâu** vào các chuỗi trạng thái đa bước phức tạp (giải phóng vùng nhớ Heap tạo con trỏ lơ lửng `S08` rồi mới kích hoạt `S09` UAF hoặc `S10` Double Free; tiêm chu trình đồ thị kích hoạt `S16` Hang; ép tràn số nguyên 16-bit kích hoạt `S17`). Kết quả mở khóa nốt **5 States cuối cùng** (`S08, S09, S10, S16, S17`), nâng độ phủ lên **100.0% (20/20 States & 20/20 Predicates)**.
+
+---
+
+### 2.4. Bảng theo dõi Phát hiện Trạng thái mới, Độ phủ (Coverage) và Crash/Treo qua 12 Test Cases
+
+| Thứ tự | Mã Test Case | Nguồn / Chế độ | Các bước (Process Steps) bị đột biến | Trạng thái mới phát hiện (New States) | Độ phủ tích lũy (Coverage %) | Phát hiện Crash / Treo (Hang) | Mã CWE |
+| :---: | :--- | :--- | :--- | :--- | :---: | :--- | :---: |
+| **01** | `TC01_SEED_ROOT` | `SEED_01` (`SEED_INIT`) | 5 bước khởi tạo Thủy tổ hợp lệ | `+10 States`: `S00, S01, S02, S04, S06, S07, S11, S13, S15, S18` | **50.0%** (10/20) | Không (An toàn) | N/A |
+| **02** | `TC02_SEED_BRANCH` | `SEED_02` (`SEED_INIT`) | 5 bước khởi tạo Trưởng chi đời 2 | `+0 State` (Củng cố đường đi cơ sở) | **50.0%** (10/20) | Không (An toàn) | N/A |
+| **03** | `TC03_SEED_LEAF` | `SEED_03` (`SEED_INIT`) | 5 bước khởi tạo Cháu đời 3 | `+0 State` (Củng cố đường đi cơ sở) | **50.0%** (10/20) | Không (An toàn) | N/A |
+| **04** | `TC04_BFS_STACK_OVF` | `SEED_01` (`BFS_MUT`) | **Step 1:** `raw_name` dài 45 bytes ($\ge 16$) | `+1 State`: **`S03`** (`S01 -> S03` qua `P03`) | **55.0%** (11/20) | **`CRASH_BUF`** (Stack Buffer Overflow) | `CWE-121` |
+| **05** | `TC05_BFS_FMT_STR` | `SEED_01` (`BFS_MUT`) | **Step 1:** `bio_note` chứa `"%x.%x.%x.%n"` | `+1 State`: **`S05`** (`S00 -> S05` qua `P05`) | **60.0%** (12/20) | **`CRASH_BUF`** (Format String Bug) | `CWE-134` |
+| **06** | `TC06_BFS_OOB_WRITE` | `SEED_01` (`BFS_MUT`) | **Step 3:** `parent_idx = -5` ($< 0$) | `+1 State`: **`S12`** (`S07 -> S12` qua `P12`) | **65.0%** (13/20) | **`CRASH_MEM`** (Out-of-Bounds Write) | `CWE-787` |
+| **07** | `TC07_BFS_NULL_PTR` | `SEED_01` (`BFS_MUT`) | **Step 3:** `spouse_idx = 15` (`registry[15] == NULL`) | `+1 State`: **`S14`** (`S11 -> S14` qua `P14`) | **70.0%** (14/20) | **`CRASH_MEM`** (NULL Pointer Deref) | `CWE-476` |
+| **08** | `TC08_BFS_OOB_READ` | `SEED_01` (`BFS_MUT`) | **Step 5:** `audit_claim_len = 60` ($> 24$B) | `+1 State`: **`S19`** (`S15 -> S19` qua `P19`) | **75.0%** (15/20) | **`CRASH_BUF`** (Out-of-Bounds Read) | `CWE-125` |
+| **09** | `TC09_DFS_HEAP_UAF` | `SEED_02` (`DFS_MUT`) | **Step 2:** `lifecycle_op = 1` (`free` $\rightarrow$ `edit`) | `+2 States`: **`S08`** (`P08`), **`S09`** (`P09`) | **85.0%** (17/20) | **`CRASH_MEM`** (Heap Use-After-Free) | `CWE-416` |
+| **10** | `TC10_DFS_DBL_FREE` | `SEED_02` (`DFS_MUT`) | **Step 2:** `lifecycle_op = 2` (`free` $\rightarrow$ `free` #2) | `+1 State`: **`S10`** (`S08 -> S10` qua `P10`) | **90.0%** (18/20) | **`CRASH_MEM`** (Heap Double Free) | `CWE-415` |
+| **11** | `TC11_DFS_CYCLE_HANG` | `SEED_02` (`DFS_MUT`) | **Step 3 & 4:** `create_cycle = 1` ($0 \leftrightarrow 1$ trên DFS/BFS) | `+1 State`: **`S16`** (`S11 -> S16` qua `P16`) | **95.0%** (19/20) | **`HANG`** (Treo vòng lặp vô hạn DFS/BFS) | `CWE-674` |
+| **12** | `TC12_DFS_INT_OVF` | `SEED_02` (`DFS_MUT`) | **Step 4:** `fund_record_count = 16385` (Tràn 16-bit) | `+1 State`: **`S17`** (`S15 -> S17` qua `P17`) | **100.0%** (20/20) | **`CRASH_INT`** (Int Overflow $\rightarrow$ Heap OVF) | `CWE-190` |
+
+---
+
+### 2.5. Giải thích Log thực thi (`fuzzing_execution.log`)
+Khi chạy chương trình, toàn bộ nhật ký được ghi tự động ra file [`fuzzing_execution.log`](file:///d:/atpm/project/fuzzing_execution.log). Cách đọc các dòng log khi trình bày với giảng viên:
+* **`[PROCESS STEPS]`**: Hiển thị rõ 5 bước đầu vào của Test Case đang chạy qua 5 Module.
+* **`[DFS/BFS TREE TRAVERSAL] DFS_Steps=... | BFS_Steps=... | Cycle_Flag=...`**:
+  * Ở các Test Case bình thường (`Cycle_Flag=0`), `DFS_Steps=4` và `BFS_Steps=4` (duyệt hết 4 đời từ Thủy tổ đến đời thứ 4 rồi dừng).
+  * Ở `TC11_DFS_CYCLE_HANG` (`Cycle_Flag=1`), `DFS_Steps=33` và `BFS_Steps=33` (vượt ngưỡng tối đa `MAX_DFS_BFS_STEPS = 32`), lập tức kích hoạt cảnh báo **`HANG / INFINITE LOOP DETECTED`**.
+* **`[+] NEW STATE DISCOVERED: Sxx (Parent -> Sxx) | Predicate Pxx: (...) | Mem: [...]`**: Báo hiệu Fuzzer vừa khám phá ra một trạng thái mới trên cây trạng thái, kèm theo mệnh đề vừa thỏa mãn và vùng nhớ được cấp phát.
+* **`[!] >>> CRASH DETECTED` / `HANG / INFINITE LOOP DETECTED`**: Chỉ rõ loại sự cố (`CRASH_BUF`, `CRASH_MEM`, `CRASH_INT`, `HANG`), mã lỗ hổng chuẩn quốc tế (`CWE-...`), tên Module và lý do vi phạm mệnh đề.
+* **`[METRICS AFTER TC #xx]`**: Cập nhật tức thời số trạng thái mới phát hiện và tỷ lệ phần trăm độ phủ `State_Coverage` & `Predicate_Coverage` (đạt **100.0%** sau `TC12`).
