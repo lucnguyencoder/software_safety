@@ -7,10 +7,8 @@ Dự án kiểm thử an toàn phần mềm (Software Safety) và Whitebox Fuzzi
 ## 📁 Cấu trúc kho lưu trữ (Repository Structure)
 
 ```text
-├── clan_genealogy_fuzzer.c              # Mã nguồn C mô phỏng & Fuzzing Harness (libFuzzer/AFL/GCC)
-├── BAO_CAO_QUY_TRINH_FUZZING.md         # Báo cáo chi tiết quy trình 5 bước (Source -> Modules -> Log -> Spec -> Excel)
-├── Bao_Cao_Kiem_Thu_Fuzzing_MocBan.xlsx # Bảng báo cáo đánh giá rủi ro MITRE CWE (định dạng Excel)
-├── Bao_Cao_Kiem_Thu_Fuzzing_MocBan.csv  # Bảng báo cáo định danh CWE (định dạng CSV)
+├── clan_genealogy_fuzzer.c              # Mã nguồn C mô phỏng & Fuzzing Harness (1 Module duy nhất)
+├── Bao_Cao_Kiem_Thu_Fuzzing_MocBan.xlsx # Bảng báo cáo kiểm thử White-box Fuzzing (định dạng Excel)
 ├── quanly-dongho/                       # Mã nguồn hệ thống Quản lý Dòng họ
 │   ├── src/                             # Frontend (React 19, TypeScript, Vite, Tailwind CSS)
 │   ├── backend/                         # Backend API (Node.js, Express, MySQL)
